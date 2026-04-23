@@ -1,0 +1,28 @@
+deliverable_id,engagement_id,deliverable_name,assignee,due_date,priority,deliverable_status,hours_estimated
+DEL-001,ENG-001,Current State Assessment,Michael Torres,02/01/2025,High,Delivered,40
+DEL-002,ENG-001,Stakeholder Interviews,Sarah Chen,02/15/2025,High,Delivered,24
+DEL-003,ENG-001,Technology Roadmap,Michael Torres,03/15/2025,High,In Progress,60
+DEL-004,ENG-001,Implementation Plan,Sarah Chen,04/15/2025,Medium,To Do,32
+DEL-005,ENG-001,Executive Presentation,Sarah Chen,04/30/2025,High,To Do,16
+DEL-006,ENG-002,Process Mapping Workshop,Emily Rodriguez,02/20/2025,High,Delivered,16
+DEL-007,ENG-002,Efficiency Analysis Report,James Wilson,03/15/2025,High,Internal Review,48
+DEL-008,ENG-002,KPI Dashboard Design,Emily Rodriguez,04/01/2025,Medium,In Progress,24
+DEL-009,ENG-002,Training Materials,Alex Kim,05/15/2025,Low,To Do,32
+DEL-010,ENG-002,Change Management Plan,James Wilson,06/01/2025,High,To Do,40
+DEL-011,ENG-003,Competitive Landscape Review,Rachel Martinez,03/20/2025,High,Delivered,32
+DEL-012,ENG-003,Customer Segmentation Study,David Park,04/05/2025,High,In Progress,28
+DEL-013,ENG-003,Go-to-Market Strategy,Rachel Martinez,05/01/2025,High,To Do,36
+DEL-014,ENG-003,Financial Projections,David Park,05/10/2025,Medium,To Do,20
+DEL-015,ENG-004,Inventory Analysis,Chris Anderson,11/20/2024,High,Delivered,36
+DEL-016,ENG-004,Vendor Assessment,Lisa Wang,12/15/2024,High,Delivered,28
+DEL-017,ENG-004,Logistics Redesign,Chris Anderson,01/30/2025,High,Delivered,52
+DEL-018,ENG-004,Implementation Roadmap,Lisa Wang,02/15/2025,Medium,Delivered,24
+DEL-019,ENG-004,Final Report & Handoff,Chris Anderson,02/28/2025,High,Delivered,16
+DEL-020,ENG-005,Journey Mapping Sessions,Jennifer Lee,12/20/2024,High,Delivered,20
+DEL-021,ENG-005,Pain Point Analysis,Kevin Brown,01/15/2025,High,Delivered,32
+DEL-022,ENG-005,Service Blueprint,Jennifer Lee,02/28/2025,Medium,In Progress,40
+DEL-023,ENG-005,Prototype Development,Kevin Brown,03/15/2025,High,To Do,48
+DEL-024,ENG-006,Skills Gap Assessment,Amanda Foster,04/30/2025,High,To Do,28
+DEL-025,ENG-006,Hiring Strategy Document,Robert Chen,05/31/2025,Medium,To Do,24
+DEL-026,ENG-006,Training Program Design,Amanda Foster,06/30/2025,Medium,To Do,36
+DEL-027,ENG-006,Succession Planning Framework,Robert Chen,07/31/2025,Low,To Do,32

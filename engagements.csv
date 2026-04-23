@@ -1,0 +1,7 @@
+engagement_id,engagement_name,client,engagement_lead,engagement_start,engagement_end,budget,engagement_status
+ENG-001,Digital Transformation Strategy,Acme Corporation,Sarah Chen,01/15/2025,04/30/2025,150000,Active
+ENG-002,Operational Excellence Program,Global Industries,James Wilson,02/01/2025,06/30/2025,200000,Active
+ENG-003,Market Entry Analysis,TechStart Inc,Rachel Martinez,03/01/2025,05/15/2025,75000,Active
+ENG-004,Supply Chain Optimization,Metro Manufacturing,Chris Anderson,11/01/2024,02/28/2025,180000,Completed
+ENG-005,Customer Experience Redesign,Retail Plus,Jennifer Lee,12/01/2024,03/31/2025,120000,On Hold
+ENG-006,Workforce Planning Initiative,HealthFirst Medical,Amanda Foster,04/01/2025,07/31/2025,95000,Planned
