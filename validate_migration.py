@@ -37,6 +37,9 @@ DELIVERABLES_BOARD_ID = "18409315323"
 
 # ── Monday column_id → readable field name ────────────────────────────────────
 
+# monday uses internal column IDs that look like "text_mm2jqk29" — not human readable.
+# these maps translate them to the field names we use in our CSVs so the rest of the
+# script can work with normal names instead of monday's internal identifiers
 ENG_COL_MAP = {
     "name":              "client",
     "text_mm2jqk29":     "engagement_id",
@@ -60,6 +63,8 @@ DEL_COL_MAP = {
 
 # ── Status normalisation maps (mirrors transform_data_nx.py) ─────────────────
 
+# these match exactly what transform_data_nx uses — keeping them in sync means
+# if we updated the transform script we'd need to update these too
 ENGAGEMENT_STATUS_MAP = {
     "in progress": "Active",
     "active":      "Active",
@@ -89,6 +94,10 @@ REQUIRED_DEL_FIELDS = [
 
 # ── Report ────────────────────────────────────────────────────────────────────
 
+# the Report class collects every check result as the script runs, then prints
+# and saves the whole thing at the end. each call to r.ok / r.warn / r.fail
+# adds a line AND increments the right counter — that's what gives us the
+# "X passed | Y warnings | Z failures" summary at the bottom
 class Report:
     def __init__(self):
         self._lines = []
@@ -137,6 +146,7 @@ class Report:
 
 # ── Source CSV parser (handles wrapped lines) ─────────────────────────────────
 
+# prevents the rows in the csv file from being lost or broken into multiple rows when they are meant to be just one row.
 def _reassemble_rows(raw_lines):
     non_empty = [l.rstrip("\r\n") for l in raw_lines if l.strip()]
     logical, current, in_header = [], None, True
@@ -189,11 +199,20 @@ def monday_request(api_key, query, variables=None):
     resp = requests.post(MONDAY_API_URL,
                          json={"query": query, **({"variables": variables} if variables else {})},
                          headers=headers)
+    # raise_for_status throws an exception immediately if monday sends back a 4xx or 5xx
+    # without this line the script would silently keep running even if the request failed
     resp.raise_for_status()
     data = resp.json()
+    # graphql always returns 200 even when something goes wrong — errors show up in the body
+    # so need to check for them separately after raise_for_status
     if "errors" in data:
         raise RuntimeError(f"Monday API error: {data['errors']}")
     return data
+
+# Monday's API returns null for value on board_relation columns.
+# The BoardRelationValue inline fragment exposes linked_item_ids directly.
+# Without this fragment, every board_relation column comes back as null
+# and we'd have no way to verify that deliverables are actually linked to engagements
 
 
 def fetch_board_items(api_key, board_id):
@@ -219,17 +238,26 @@ def fetch_board_items(api_key, board_id):
 
 def flatten_monday_item(item, col_map):
     """Turn a Monday item into a flat dict using the column map."""
+    # item["name"] is the title column — map it first, then loop through the rest
     row = {"_monday_id": item["id"], col_map.get("name", "name"): item["name"]}
     for cv in item["column_values"]:
+        # col_map translates monday's internal column ID to our readable field name
+        # if a column isn't in our map we just skip it — we only care about the fields we track
         field = col_map.get(cv["id"])
         if field:
             row[field] = cv["text"] or ""
             if field == "engagement_link":
+                # board_relation columns don't use cv["text"] or cv["value"]
+                # linked_item_ids is only available because of the inline fragment in the query
                 row["_linked_ids"] = [str(i) for i in cv.get("linked_item_ids") or []]
     return row
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# normalise_date and normalise_number exist so we can compare values apples to apples —
+# the source CSV stores dates as MM/DD/YYYY but monday stores them as YYYY-MM-DD,
+# so converting both to the same format before comparing prevents false failures
 
 def normalise_date(date_str):
     """Accepts MM/DD/YYYY or YYYY-MM-DD, returns YYYY-MM-DD or None."""
@@ -242,6 +270,8 @@ def normalise_date(date_str):
 
 
 def normalise_number(val):
+    # monday returns numbers as strings sometimes, and the CSV might have commas
+    # stripping both before converting means "1,500" and "1500" compare as equal
     try:
         return float(str(val).replace(",", "").strip())
     except (ValueError, TypeError):
@@ -251,6 +281,7 @@ def normalise_number(val):
 # ── Validation checks ─────────────────────────────────────────────────────────
 
 def check_record_counts(r, src_eng, src_del, clean_eng, clean_del, mon_eng, mon_del):
+    # check 1 — makes sure no rows got lost or duplicated at any point in the pipeline
     r.section("1 · RECORD COUNTS")
 
     src_e, src_d = len(src_eng), len(src_del)
@@ -280,7 +311,12 @@ def check_record_counts(r, src_eng, src_del, clean_eng, clean_del, mon_eng, mon_
 
 
 def check_single_deliverables(r, clean_del):
+    # check 2 — flags any engagement that only has one deliverable
+    # this isn't necessarily an error but it's worth calling out — could mean
+    # data was missed during the export or the engagement is unusually small
     r.section("2 · SINGLE-DELIVERABLE ENGAGEMENTS")
+    # defaultdict(int) auto-initializes missing keys to 0 so we don't need to check
+    # before incrementing — just count how many deliverables each engagement has
     counts = defaultdict(int)
     for row in clean_del:
         counts[row["engagement_id"]] += 1
@@ -294,6 +330,9 @@ def check_single_deliverables(r, clean_del):
 
 
 def check_missing_fields(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows, mon_del_rows):
+    # check 3 — looks for empty fields across all three data layers
+    # runs the same check on source, cleaned, and monday so we know exactly
+    # where a field went missing if something is blank
     r.section("3 · MISSING / EMPTY FIELDS")
 
     # Source engagements
@@ -369,6 +408,9 @@ def check_missing_fields(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows
 
 
 def check_status_normalisation(r, src_eng, src_del, clean_eng, clean_del):
+    # check 4 — verifies that the status mapping in transform_data_nx actually ran correctly
+    # compares the raw source value against the expected cleaned value using the same map
+    # e.g. source says "in progress" → cleaned should say "Active"
     r.section("4 · STATUS NORMALISATION  (source → cleaned CSVs)")
 
     clean_eng_idx = {row["engagement_id"]: row for row in clean_eng}
@@ -407,6 +449,9 @@ def check_status_normalisation(r, src_eng, src_del, clean_eng, clean_del):
 
 
 def check_field_values(r, src_eng, src_del, clean_eng, clean_del):
+    # check 5 — compares non-status field values between the source CSV and the cleaned CSVs
+    # this is different from check 9 which compares cleaned CSVs against live monday data
+    # check 5 is source → cleaned, check 9 is cleaned → monday — two separate validation layers
     r.section("5 · FIELD CROSS-CHECK  (source vs cleaned CSVs)")
 
     clean_eng_idx = {row["engagement_id"]: row for row in clean_eng}
@@ -451,6 +496,10 @@ def check_field_values(r, src_eng, src_del, clean_eng, clean_del):
 
 
 def check_date_formats(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows, mon_del_rows):
+    # check 6 — makes sure dates are in the right format at each layer
+    # source and cleaned CSVs should be MM/DD/YYYY, monday stores as YYYY-MM-DD
+    # this catches format issues separately from value issues — if the format is wrong
+    # it would also break normalise_date comparisons in check 9
     r.section("6 · DATE FORMAT VALIDATION")
 
     mdy = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -507,6 +556,8 @@ def check_date_formats(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows, 
 
 
 def check_numeric_fields(r, clean_eng, clean_del, mon_eng_rows, mon_del_rows):
+    # check 7 — confirms that budget and hours_estimated are actual numbers
+    # if something non-numeric got through the transform it would break monday's numeric columns
     r.section("7 · NUMERIC FIELD VALIDATION")
 
     issues = []
@@ -537,11 +588,15 @@ def check_numeric_fields(r, clean_eng, clean_del, mon_eng_rows, mon_del_rows):
 
 
 def check_relationships(r, clean_eng, clean_del, mon_del_rows, lookup):
+    # check 8 — verifies the board_relation links between deliverables and engagements
+    # this is where the inline fragment matters — _linked_ids only exists because we
+    # asked for BoardRelationValue in the graphql query. without it we'd have no way
+    # to check whether the connect boards column was actually set
     r.section("8 · RELATIONSHIP INTEGRITY")
 
     eng_ids = {row["engagement_id"] for row in clean_eng}
 
-    # Every deliverable points to a known engagement
+    # every deliverable in the cleaned CSV should point to an engagement we know about
     orphans = [row["deliverable_id"] for row in clean_del
                if row["engagement_id"] not in eng_ids]
     if orphans:
@@ -551,11 +606,13 @@ def check_relationships(r, clean_eng, clean_del, mon_del_rows, lookup):
         r.ok("Cleaned CSV — every deliverable links to a valid engagement")
 
     # Monday board_relation links point to known Monday item IDs
+    # cross-referencing _linked_ids against the lookup to confirm the link points to the right place
     known_monday_ids = {str(v) for v in lookup.values()}
     unlinked, wrong_link = [], []
     for item in mon_del_rows:
         linked = item.get("_linked_ids", [])
         if not linked:
+            # no linked IDs at all — board_relation column wasn't set for this deliverable
             unlinked.append(item.get("deliverable_name", "?"))
         else:
             for lid in linked:
@@ -574,7 +631,7 @@ def check_relationships(r, clean_eng, clean_del, mon_del_rows, lookup):
     else:
         r.ok("Monday.com — all board_relation links point to known engagement items")
 
-    # Reverse: every engagement has at least one deliverable on Monday
+    # reverse check — every engagement should have at least one deliverable pointing back at it
     linked_eng_ids = set()
     for item in mon_del_rows:
         for lid in item.get("_linked_ids", []):
@@ -589,9 +646,13 @@ def check_relationships(r, clean_eng, clean_del, mon_del_rows, lookup):
 
 
 def check_monday_field_mapping(r, clean_eng, clean_del, mon_eng_rows, mon_del_rows, lookup):
+    # check 9 — this is the final end-to-end check: cleaned CSV values vs what's actually in monday
+    # check 5 was source → cleaned, this is cleaned → monday, so together they cover the full pipeline
+    # uses normalise_date and normalise_number so the comparison is apples to apples
+    # even if the formats are different between the CSV and what monday returns from the API
     r.section("9 · MONDAY.COM FIELD MAPPING  (cleaned CSVs vs live data)")
 
-    # Index Monday rows by engagement_id / deliverable_id text columns
+    # index monday rows by their ID text column so we can look them up by engagement/deliverable ID
     mon_eng_idx = {item.get("engagement_id", ""): item for item in mon_eng_rows}
     mon_del_idx = {item.get("deliverable_id", ""): item for item in mon_del_rows}
 
@@ -672,26 +733,32 @@ def check_monday_field_mapping(r, clean_eng, clean_del, mon_eng_rows, mon_del_ro
 def main(api_key):
     r = Report()
 
+    # loading the three data layers before any checks run
+    # source = the original smartsheet export before any transformation
     print("Loading source CSV...")
     src_eng, src_del = load_source(SOURCE_CSV)
 
+    # cleaned = the output of transform_data_nx — the split and normalised CSVs on the desktop
     print("Loading cleaned CSVs...")
     clean_eng = load_csv(ENGAGEMENTS_CSV)
     clean_del = load_csv(DELIVERABLES_CSV)
 
-    print("Loading engagement lookup...")
+    print("Loading engagement lookup...") #engagement lookup allows the mapping of engagement ids from the CSV to the monday file. Points to the right monday item.
     with open(LOOKUP_JSON, encoding="utf-8") as f:
         lookup = json.load(f)   # {engagement_id: monday_item_id}
 
+    # monday = live data pulled directly from the boards via API — the source of truth for what actually got uploaded
     print("Querying Monday.com boards...")
     raw_mon_eng = fetch_board_items(api_key, ENGAGEMENTS_BOARD_ID)
     raw_mon_del = fetch_board_items(api_key, DELIVERABLES_BOARD_ID)
 
+    # flatten turns monday's nested API response into flat dicts that match our CSV structure
     mon_eng_rows = [flatten_monday_item(i, ENG_COL_MAP) for i in raw_mon_eng]
     mon_del_rows = [flatten_monday_item(i, DEL_COL_MAP) for i in raw_mon_del]
 
     print("Running validation checks...\n")
 
+    # 9 checks total — each one is a separate r.ok / r.warn / r.fail that feeds the final summary
     check_record_counts(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows, mon_del_rows)
     check_single_deliverables(r, clean_del)
     check_missing_fields(r, src_eng, src_del, clean_eng, clean_del, mon_eng_rows, mon_del_rows)
@@ -711,3 +778,6 @@ if __name__ == "__main__":
         print("Usage: py validate_migration.py <MONDAY_API_KEY>")
         sys.exit(1)
     main(sys.argv[1])
+
+#pagination not needed but could have been added / retry logic
+#duplicate deliverables in monday could be checked

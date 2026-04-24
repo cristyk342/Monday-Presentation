@@ -36,6 +36,7 @@ import requests
 ENGAGEMENTS_BOARD_ID = "18409314022"
 DELIVERABLES_BOARD_ID = "18409315323"
 
+# column IDs are kept here so they can be updated in one place if the board changes
 ENG_COLS = {
     "engagement_id": "text_mm2jqk29",
     "lead":          "text_mm2jve4b",
@@ -90,7 +91,9 @@ def create_item(api_key, board_id, item_name, col_values_dict):
     col_values_dict: {column_id: python value/dict}
     Monday expects column_values as a single JSON-serialized string.
     """
+    # strip out any None values before sending — avoids passing empty fields to Monday
     filtered = {k: v for k, v in col_values_dict.items() if v is not None}
+    # Monday expects column_values as a single JSON string, not a dict
     col_values_json = json.dumps(filtered)
 
     query = """
@@ -110,11 +113,14 @@ def create_item(api_key, board_id, item_name, col_values_dict):
         "column_values": col_values_json,
     }
     data = monday_request(api_key, query, variables)
+    # return the new Monday item ID so we can store it in the lookup
     return int(data["data"]["create_item"]["id"])
 
 
 # ── Column value builders ─────────────────────────────────────────────────────
 
+# each function below formats values the way Monday's API expects for that column type
+# hardcoded to Monday's current spec — if Monday changes the format, update here only
 def date_val(date_str):
     """MM/DD/YYYY -> {"date": "YYYY-MM-DD"}, or None on bad input."""
     try:
@@ -139,6 +145,8 @@ def text_val(value):
 def board_relation_val(monday_item_id):
     return {"item_ids": [monday_item_id]}
 
+#follows monday formatting values
+#can easily be changed
 
 # ── Upload logic ──────────────────────────────────────────────────────────────
 
@@ -169,9 +177,10 @@ def upload_engagements(api_key):
         }
 
         monday_id = create_item(api_key, ENGAGEMENTS_BOARD_ID, client, col_values)
+        # store the returned Monday ID against our engagement ID for the deliverable upload
         lookup[eng_id] = monday_id
         print(f"    -> Monday item ID: {monday_id}")
-        time.sleep(REQUEST_DELAY)
+        time.sleep(REQUEST_DELAY)  # stay under Monday's rate limit
 
     return lookup
 
@@ -194,6 +203,8 @@ def upload_deliverables(api_key, engagement_lookup):
 
         parent_id = engagement_lookup.get(eng_id)
         if parent_id is None:
+            # engagement wasn't in the lookup — something went wrong during the engagement upload
+            # log it and skip rather than crashing the whole run
             print(f"  [SKIP] {del_id}: no Monday item found for engagement {eng_id}")
             continue
 
@@ -206,7 +217,7 @@ def upload_deliverables(api_key, engagement_lookup):
             DEL_COLS["due_date"]:        date_val(row["due_date"]),
             DEL_COLS["hours_estimated"]: number_val(row["hours_estimated"]),
             DEL_COLS["priority"]:        status_val(row["priority"].strip()),
-            DEL_COLS["engagement_link"]: board_relation_val(parent_id),
+            DEL_COLS["engagement_link"]: board_relation_val(parent_id),  # links deliverable to its parent engagement
         }
 
         monday_id = create_item(api_key, DELIVERABLES_BOARD_ID, name, col_values)
@@ -219,6 +230,7 @@ def upload_deliverables(api_key, engagement_lookup):
 def main(api_key):
     engagement_lookup = upload_engagements(api_key)
 
+    # save lookup to disk so deliverable upload can be re-run independently if it fails
     with open(LOOKUP_OUTPUT, "w", encoding="utf-8") as f:
         json.dump(engagement_lookup, f, indent=2)
     print(f"\nEngagement lookup saved -> {LOOKUP_OUTPUT}")
@@ -233,3 +245,4 @@ if __name__ == "__main__":
         print("Usage: py load_to_monday.py <MONDAY_API_KEY>")
         sys.exit(1)
     main(sys.argv[1])
+
